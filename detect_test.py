@@ -1,80 +1,96 @@
 import pyaudio
 import librosa
 import numpy as np
+from bisect import bisect_left
 
 
 class PitchDetect:
-    # note_names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
-    note_names = ["도", "도#", "레", "레#", "미", "파", "파#", "솔", "솔#", "라", "라#", "시"]
+    note_names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+    note_names_kr = ["도", "도#", "레", "레#", "미", "파", "파#", "솔", "솔#", "라", "라#", "시"]
+    octaves = [31, 63, 127, 255, 511, 1023, 2047, 4095, 8191, 16383]
+
+    def __init__(self):
+        self.CHUNK = 2**10
+        self.FORMAT = pyaudio.paFloat32
+        self.CHANNELS = 1
+        self.RATE = 44100
+
+    def get_frequencies(self, sample_sounds):
+        fft_result = np.fft.fft(sample_sounds)
+
+        peak_freq_index = np.argmax(np.abs(fft_result))
+        frequency = (peak_freq_index * self.RATE) / self.CHUNK
+
+        return frequency
 
     def get_stft(self, sample_sounds):
         return librosa.stft(sample_sounds)
 
-    def get_chroma(self, sample_sounds, sr=44100):
+    def get_chroma(self, sample_sounds, sr=0):
         return librosa.feature.chroma_stft(
             S=np.abs(self.get_stft(sample_sounds)), sr=sr
         )
 
-    def get_note_name_from_sound(self, sample_sounds, sr=44100):
-        chroma_result = self.get_chroma(sample_sounds, sr=sr).mean(axis=1)
-        note_index = np.argmax(np.abs(chroma_result))
+    def get_note_name_from_sound(self, sample_sounds, frequency, sr=44100):
+        # chroma_result = self.get_chroma(sample_sounds, sr=sr).mean(axis=1)
+        # note_index = np.argmax(np.abs(chroma_result))
+        octave = bisect_left(self.octaves, frequency)
+        cur = 440 / (2 ** (4 - octave))
+        note_index = 9
 
-        return f"{self.note_names[note_index]}"
+        while True:
+            if frequency >= cur:
+                next_ = cur * (2 ** (1 / 12))
+                if frequency < next_:
+                    if next_ - frequency < frequency - cur:
+                        note_index += 1
+                    break
+                else:
+                    cur = next_
+                    note_index += 1
+                    continue
+            else:
+                next_ = cur * (2 ** (-1 / 12))
+                if frequency > next_:
+                    if frequency - next_ < cur - frequency:
+                        note_index -= 1
+                    break
+                else:
+                    cur = next_
+                    note_index -= 1
+                    continue
 
-    def get_note_name(self, frequency):
-        if frequency < 100.0:
-            return "empty"
-
-        A4_freq = 440.0
-        semitone_ratio = 2 ** (1 / 12.0)
-
-        try:
-            num_semitones = round(12 * np.log2(frequency / A4_freq))
-
-        except:
-            return "empty"
-        octave = num_semitones // 12
-        note_index = num_semitones % 12
-
-        return f"{self.note_names[note_index]} {octave}"
+        return (
+            f"{self.note_names_kr[note_index]} ({self.note_names[note_index]}{octave})"
+        )
 
     def analyze_audio_stream(self):
-        CHUNK = 2**10
-        FORMAT = pyaudio.paFloat32
-        CHANNELS = 1
-        RATE = 44100
-
         p = pyaudio.PyAudio()
 
         stream = p.open(
-            format=FORMAT,
-            channels=CHANNELS,
-            rate=RATE,
+            format=self.FORMAT,
+            channels=self.CHANNELS,
+            rate=self.RATE,
             input=True,
-            frames_per_buffer=CHUNK,
+            frames_per_buffer=self.CHUNK,
         )
 
         print("Listening...")
 
         try:
             while True:
-                data = stream.read(CHUNK)
+                data = stream.read(self.CHUNK)
                 audio_array = np.frombuffer(data, dtype=np.float32)
-
-                result = np.fft.fft(audio_array)
-                # result = self.get_stft(audio_array).mean(axis=1)
-
-                peak_freq_index = np.argmax(np.abs(result))
-                frequency = (peak_freq_index * RATE) / CHUNK
-
+                frequency = self.get_frequencies(audio_array)
                 if 10000 > frequency > 50:
-                    note_name = self.get_note_name_from_sound(audio_array)
+                    note_name = self.get_note_name_from_sound(
+                        audio_array,
+                        frequency=frequency,
+                        sr=self.RATE,
+                    )
                 else:
                     note_name = "None"
-                # note_name = self.get_note_name(frequency)
-                # if frequency>=100:
-                #     note_name += " "+self.get_note_name_from_sound(audio_array)
-
+                    continue
                 print(
                     f"Detected frequency: {frequency:.2f} Hz | Note: {note_name}",
                 )
