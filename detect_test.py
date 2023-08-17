@@ -1,6 +1,7 @@
 import pyaudio
 import librosa
 import numpy as np
+import matplotlib.pyplot as plt
 from bisect import bisect_left
 
 
@@ -11,7 +12,7 @@ class PitchDetect:
 
     def __init__(self):
         self.CHUNK = 2**10
-        self.FORMAT = pyaudio.paFloat32
+        self.FORMAT = pyaudio.paInt16
         self.CHANNELS = 1
         self.RATE = 44100
 
@@ -76,11 +77,16 @@ class PitchDetect:
         )
 
         print("Listening...")
+        plt.ion()
+        frequency_list = [0 for i in range(256)]
+        frequency_index = 0
+        fig = plt.figure()
+        ax = plt.axes(xlim=(0, 256), ylim=(0, 1000))
 
         try:
             while True:
                 data = stream.read(self.CHUNK)
-                audio_array = np.frombuffer(data, dtype=np.float32)
+                audio_array = np.frombuffer(data, dtype=np.int16)
                 frequency = self.get_frequencies(audio_array)
                 if 10000 > frequency > 50:
                     note_name = self.get_note_name_from_sound(
@@ -89,11 +95,21 @@ class PitchDetect:
                         sr=self.RATE,
                     )
                 else:
+                    frequency = 0
                     note_name = "None"
                     continue
                 print(
                     f"Detected frequency: {frequency:.2f} Hz | Note: {note_name}",
                 )
+
+                frequency_list[frequency_index] = frequency
+                frequency_index = (frequency_index + 1) % 256
+                ax.clear()
+                ax = plt.axes(xlim=(0, 256), ylim=(0, 1000))
+                ax.plot(
+                    frequency_list[frequency_index:] + frequency_list[:frequency_index]
+                )
+                plt.pause(0.01)
 
         except KeyboardInterrupt:
             pass
